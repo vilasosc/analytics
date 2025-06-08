@@ -3,11 +3,13 @@ from sqlalchemy.orm import Session
 from typing import List, Dict, Any # Added Dict, Any
 from app.core.database import get_db
 from app.crud import crud_datasource, crud_metadata
+from app.crud.crud_datasource import get_datasource_with_decrypted_password # Added
 from app.schemas.metadata import ( # Expanded imports
     MetadataSyncResult, DataTableResponse, MetadataSyncRequest,
     TableActivationRequest, TablePreviewResponse
 )
-from app.schemas.datasource import DataSourceResponse as DataSourceSchemaResponse # For type hint in mock preview
+from app.schemas.datasource import DataSourceBase as PydanticDataSourceBase # Added
+from app.utils.sqlserver_utils import fetch_table_preview_data # Added
 # from app.core.auth import get_current_active_user # Placeholder
 # from app.models.user import User # Placeholder
 
@@ -83,25 +85,29 @@ def preview_table_data(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Data preview is currently only supported for SQLSERVER data sources.")
 
     try:
-        # --- MOCK IMPLEMENTATION START (to be replaced by actual utility call) ---
-        # This section simulates what fetch_table_preview_data_from_source would do.
-        # It uses db_table_meta.columns for column names (lazy-loaded if not already).
+        decrypted_datasource = get_datasource_with_decrypted_password(db=db, datasource_id=db_datasource.id)
+        if not decrypted_datasource or not decrypted_datasource.db_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Datasource password is not set or could not be decrypted."
+            )
 
-        mock_columns = [col.column_name for col in db_table_meta.columns]
-        mock_rows = []
-        if mock_columns: # Only generate mock rows if columns exist
-            for i in range(min(limit, 5)): # Generate a few mock rows up to limit (max 5 for this mock)
-                row_data = {}
-                for idx, col_name in enumerate(mock_columns):
-                    row_data[col_name] = f"sample_data_{i+1}_{idx+1}"
-                mock_rows.append(row_data)
+        ds_base_details = PydanticDataSourceBase(
+            name=decrypted_datasource.name,
+            type=str(decrypted_datasource.type.value),
+            db_host=decrypted_datasource.db_host,
+            db_port=decrypted_datasource.db_port,
+            db_name=decrypted_datasource.db_name,
+            db_username=decrypted_datasource.db_username
+        )
 
-        preview_data = {
-            "columns": mock_columns,
-            "rows": mock_rows,
-            "actual_row_count": len(mock_rows)
-        }
-        # --- MOCK IMPLEMENTATION END ---
+        preview_data = fetch_table_preview_data(
+            ds_details=ds_base_details,
+            password_override=decrypted_datasource.db_password,
+            schema_name=db_table_meta.schema_name,
+            table_name=db_table_meta.table_name,
+            limit=limit
+        )
 
         return TablePreviewResponse(
             table_name=db_table_meta.table_name,
@@ -109,13 +115,13 @@ def preview_table_data(
             columns=preview_data["columns"],
             rows=preview_data["rows"],
             row_count=preview_data["actual_row_count"],
-            is_preview_limited=preview_data["actual_row_count"] >= limit,
+            is_preview_limited=preview_data["actual_row_count"] >= limit if preview_data["actual_row_count"] is not None else False, # actual_row_count can be 0
             limit=limit
         )
 
-    except ConnectionError as ce: # Though mock doesn't connect, keep for future
+    except ConnectionError as ce:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"Could not connect to source database: {str(ce)}")
-    except ValueError as ve:
+    except ValueError as ve: # Catches issues from fetch_table_preview_data or password issues
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
         print(f"Unexpected error during table preview for table {table_id}: {e}")

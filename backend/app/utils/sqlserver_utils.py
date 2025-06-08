@@ -140,3 +140,67 @@ def fetch_all_data_from_table(
         print(f"Unexpected error extracting data from {effective_schema_name}.{table_name}: {e}")
         raise # Re-raise unexpected errors
     return rows_data
+
+
+def fetch_table_preview_data(
+    ds_details: DataSourceBase,
+    password_override: str,
+    schema_name: Optional[str],
+    table_name: str,
+    limit: int = 50
+) -> Dict[str, Any]:
+    """
+    Fetches a limited number of rows from a specified table for preview.
+    Returns a dictionary containing column names and rows.
+    """
+    if not table_name:
+        raise ValueError("Table name cannot be empty.")
+    if limit <= 0:
+        raise ValueError("Limit must be a positive integer.")
+
+    details_with_pw = _get_details_with_password(ds_details, password_override)
+    conn_str = build_connection_string(details_with_pw)
+    preview_data = {"columns": [], "rows": [], "actual_row_count": 0}
+
+    try:
+        with pyodbc.connect(conn_str, timeout=10) as conn: # Added connection timeout
+            with conn.cursor() as cursor:
+                conn.timeout = 20 # Set execution timeout on the connection (e.g., 20 seconds)
+
+                # Construct safe table and schema name for query
+                safe_table_name = table_name.replace("]", "]]") # Basic escaping for brackets
+
+                # Effective schema name (defaults to 'dbo' if None or empty, common for SQL Server)
+                effective_schema = schema_name if schema_name else 'dbo'
+                safe_schema_name = effective_schema.replace("]", "]]")
+
+                # Formulate query using TOP for limit
+                # Ensure schema and table are properly quoted to handle special characters/reserved words
+                query = f"SELECT TOP ({limit}) * FROM [{safe_schema_name}].[{safe_table_name}]" # Ensure TOP is parenthesized for some SQL Server versions if limit is a variable, though direct int is usually fine.
+
+                cursor.execute(query)
+
+                columns = [column[0] for column in cursor.description] if cursor.description else []
+                preview_data["columns"] = columns
+
+                rows_fetched = 0
+                if columns: # Only proceed if columns were found
+                    for row in cursor.fetchall(): # fetchall() respects the TOP clause
+                        preview_data["rows"].append(dict(zip(columns, row)))
+                        rows_fetched += 1
+                preview_data["actual_row_count"] = rows_fetched
+
+    except pyodbc.Error as ex:
+        sqlstate = ex.args[0] if ex.args and len(ex.args) > 0 else "Unknown"
+        error_message = str(ex)
+        # Basic error classification, can be expanded
+        if sqlstate in ('08001', '08003', '08004', '08S01'): # Connection related errors
+            raise ConnectionError(f"Connection failed to SQL Server: {error_message}")
+        elif sqlstate in ('42S02', '3F000'): # Table or schema not found (42S02), Invalid schema name (3F000)
+            raise ValueError(f"Table or schema not found: [{effective_schema}].[{table_name}]. Error: {error_message}")
+        else: # Other database errors
+            raise ValueError(f"Database error fetching preview for table [{effective_schema}].[{table_name}]: {error_message}")
+    except Exception as e: # Catch any other unexpected errors
+        raise RuntimeError(f"An unexpected error occurred while fetching table preview: {e}")
+
+    return preview_data
