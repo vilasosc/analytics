@@ -6,3 +6,5 @@ python-jose[cryptography]
 passlib[bcrypt]
 pyodbc
 pyarrow
+celery
+redis

@@ -1,13 +1,13 @@
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from app.models.sync import SyncJob, SyncJobTableDetail, SyncStatus, SyncType
-from app.models.datasource import DataSource # Added
-from app.models.metadata import DataTable # Added
-from app.crud.crud_metadata import get_datatables_for_datasource # Added
-from app.utils.sqlserver_utils import fetch_all_data_from_table # Added
-from app.utils.parquet_utils import write_data_to_parquet # Added
-from app.schemas.datasource import DataSourceBase as PydanticDataSourceBase # Added
-import os # Added
+from app.models.datasource import DataSource # Retained: Used by other functions or potentially useful
+from app.models.metadata import DataTable # Retained: Used by other functions or potentially useful
+# from app.crud.crud_metadata import get_datatables_for_datasource # Removed: Specific to run_manual_sync_for_datasource
+# from app.utils.sqlserver_utils import fetch_all_data_from_table # Removed: Specific to run_manual_sync_for_datasource
+# from app.utils.parquet_utils import write_data_to_parquet # Removed: Specific to run_manual_sync_for_datasource
+# from app.schemas.datasource import DataSourceBase as PydanticDataSourceBase # Removed: Specific to run_manual_sync_for_datasource
+# import os # Removed: Specific to run_manual_sync_for_datasource
 from sqlalchemy.sql import func
 
 def create_sync_job(db: Session, datasource_id: int, sync_type: SyncType = SyncType.MANUAL, initial_status: SyncStatus = SyncStatus.PENDING) -> SyncJob:
@@ -67,73 +67,73 @@ def update_sync_job_table_detail_status(db: Session, detail_id: int, status: Syn
 def get_sync_job_table_details_for_job(db: Session, sync_job_id: int) -> List[SyncJobTableDetail]:
     return db.query(SyncJobTableDetail).filter(SyncJobTableDetail.sync_job_id == sync_job_id).all()
 
-def run_manual_sync_for_datasource(db: Session, datasource: DataSource) -> SyncJob:
-    PARQUET_BASE_DIR = os.path.join("pcsoft_data_storage", "parquet_files") # Simplified path
-
-    sync_job = create_sync_job(db=db, datasource_id=datasource.id, sync_type=SyncType.MANUAL, initial_status=SyncStatus.RUNNING)
-
-    # Ensure that get_datatables_for_datasource returns DataTable instances
-    active_tables_query: List[DataTable] = get_datatables_for_datasource(db=db, datasource_id=datasource.id)
-    active_tables = [table for table in active_tables_query if table.is_active_for_sync]
-
-    if not active_tables:
-        update_sync_job_status(db, sync_job_id=sync_job.id, status=SyncStatus.SUCCESS, message="No active tables found for synchronization.", set_end_time=True)
-        # Re-fetch job to get updated status and details (though no details in this case)
-        refetched_job = get_sync_job(db, sync_job.id)
-        return refetched_job if refetched_job else sync_job
-
-
-    overall_status = SyncStatus.SUCCESS # Assume success until a failure occurs
-    failed_count = 0
-
-    for table_meta in active_tables:
-        # Create detail record, start_time is set by server_default in model
-        detail = create_sync_job_table_detail(db=db, sync_job_id=sync_job.id, datatable_id=table_meta.id, initial_status=SyncStatus.RUNNING)
-        rows_count = 0
-        try:
-            # Convert SQLAlchemy DataSource model to Pydantic DataSourceBase for utility function compatibility
-            # Assuming datasource.type is an Enum, its .value gives the string representation
-            pydantic_ds_details = PydanticDataSourceBase(
-                name=datasource.name,
-                type=str(datasource.type.value),
-                db_host=datasource.db_host,
-                db_port=datasource.db_port,
-                db_name=datasource.db_name,
-                db_username=datasource.db_username
-            )
-
-            table_data = fetch_all_data_from_table(
-                ds_details=pydantic_ds_details,
-                password_override=datasource.db_password, # Assuming db_password field exists on DataSource model
-                schema_name=table_meta.schema_name if table_meta.schema_name else 'dbo',
-                table_name=table_meta.table_name
-            )
-            rows_count = len(table_data)
-
-            # Define file path structure: BASE_DIR/datasource_XX/schema_YYY/table_ZZZ.parquet
-            # Handle cases where schema_name might be None or empty
-            schema_folder_name = f"schema_{table_meta.schema_name}" if table_meta.schema_name else "schema_None"
-
-            file_path = os.path.join(PARQUET_BASE_DIR, f"datasource_{datasource.id}", schema_folder_name, f"table_{table_meta.table_name}.parquet")
-
-            write_data_to_parquet(data=table_data, file_path=file_path)
-            update_sync_job_table_detail_status(db=db, detail_id=detail.id, status=SyncStatus.SUCCESS, rows_processed=rows_count, set_end_time=True)
-
-        except Exception as e:
-            failed_count += 1
-            # Truncate error message to avoid overly long strings in DB
-            err_msg = f"Error processing table '{table_meta.table_name}': {str(e)[:500]}"
-            update_sync_job_table_detail_status(db=db, detail_id=detail.id, status=SyncStatus.FAILED, error_message=err_msg, rows_processed=rows_count, set_end_time=True)
-
-    if failed_count > 0:
-        if failed_count == len(active_tables):
-            overall_status = SyncStatus.FAILED
-        else:
-            overall_status = SyncStatus.PARTIAL_SUCCESS
-
-    final_msg = f"Synchronization complete. {len(active_tables) - failed_count} table(s) succeeded, {failed_count} table(s) failed."
-    update_sync_job_status(db, sync_job_id=sync_job.id, status=overall_status, message=final_msg, set_end_time=True)
-
-    # Re-fetch the job to include all updated details and status
-    refetched_job_final = get_sync_job(db, sync_job.id)
-    return refetched_job_final if refetched_job_final else sync_job
+# def run_manual_sync_for_datasource(db: Session, datasource: DataSource) -> SyncJob:
+#     PARQUET_BASE_DIR = os.path.join("pcsoft_data_storage", "parquet_files") # Simplified path
+#
+#     sync_job = create_sync_job(db=db, datasource_id=datasource.id, sync_type=SyncType.MANUAL, initial_status=SyncStatus.RUNNING)
+#
+#     # Ensure that get_datatables_for_datasource returns DataTable instances
+#     active_tables_query: List[DataTable] = get_datatables_for_datasource(db=db, datasource_id=datasource.id) # This import would need to be restored if uncommented
+#     active_tables = [table for table in active_tables_query if table.is_active_for_sync]
+#
+#     if not active_tables:
+#         update_sync_job_status(db, sync_job_id=sync_job.id, status=SyncStatus.SUCCESS, message="No active tables found for synchronization.", set_end_time=True)
+#         # Re-fetch job to get updated status and details (though no details in this case)
+#         refetched_job = get_sync_job(db, sync_job.id)
+#         return refetched_job if refetched_job else sync_job
+#
+#
+#     overall_status = SyncStatus.SUCCESS # Assume success until a failure occurs
+#     failed_count = 0
+#
+#     for table_meta in active_tables:
+#         # Create detail record, start_time is set by server_default in model
+#         detail = create_sync_job_table_detail(db=db, sync_job_id=sync_job.id, datatable_id=table_meta.id, initial_status=SyncStatus.RUNNING)
+#         rows_count = 0
+#         try:
+#             # Convert SQLAlchemy DataSource model to Pydantic DataSourceBase for utility function compatibility
+#             # Assuming datasource.type is an Enum, its .value gives the string representation
+#             # pydantic_ds_details = PydanticDataSourceBase( # This import would need to be restored if uncommented
+#             # name=datasource.name,
+#             # type=str(datasource.type.value),
+#             # db_host=datasource.db_host,
+#             # db_port=datasource.db_port,
+#             # db_name=datasource.db_name,
+#             # db_username=datasource.db_username
+#             # )
+#
+#             # table_data = fetch_all_data_from_table( # This import would need to be restored if uncommented
+#             # ds_details=pydantic_ds_details,
+#             # password_override=datasource.db_password, # Assuming db_password field exists on DataSource model
+#             # schema_name=table_meta.schema_name if table_meta.schema_name else 'dbo',
+#             # table_name=table_meta.table_name
+#             # )
+#             # rows_count = len(table_data)
+#
+#             # Define file path structure: BASE_DIR/datasource_XX/schema_YYY/table_ZZZ.parquet
+#             # Handle cases where schema_name might be None or empty
+#             schema_folder_name = f"schema_{table_meta.schema_name}" if table_meta.schema_name else "schema_None"
+#
+#             # file_path = os.path.join(PARQUET_BASE_DIR, f"datasource_{datasource.id}", schema_folder_name, f"table_{table_meta.table_name}.parquet") # os import needed
+#
+#             # write_data_to_parquet(data=table_data, file_path=file_path) # This import would need to be restored if uncommented
+#             update_sync_job_table_detail_status(db=db, detail_id=detail.id, status=SyncStatus.SUCCESS, rows_processed=rows_count, set_end_time=True)
+#
+#         except Exception as e:
+#             failed_count += 1
+#             # Truncate error message to avoid overly long strings in DB
+#             err_msg = f"Error processing table '{table_meta.table_name}': {str(e)[:500]}"
+#             update_sync_job_table_detail_status(db=db, detail_id=detail.id, status=SyncStatus.FAILED, error_message=err_msg, rows_processed=rows_count, set_end_time=True)
+#
+#     if failed_count > 0:
+#         if failed_count == len(active_tables):
+#             overall_status = SyncStatus.FAILED
+#         else:
+#             overall_status = SyncStatus.PARTIAL_SUCCESS
+#
+#     final_msg = f"Synchronization complete. {len(active_tables) - failed_count} table(s) succeeded, {failed_count} table(s) failed."
+#     update_sync_job_status(db, sync_job_id=sync_job.id, status=overall_status, message=final_msg, set_end_time=True)
+#
+#     # Re-fetch the job to include all updated details and status
+#     refetched_job_final = get_sync_job(db, sync_job.id)
+#     return refetched_job_final if refetched_job_final else sync_job

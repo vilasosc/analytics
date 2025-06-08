@@ -5,7 +5,9 @@ from app.core.database import get_db
 from app.crud import crud_datasource
 from app.schemas.datasource import DataSourceCreate, DataSourceUpdate, DataSourceResponse, DataSourceBase
 from app.models.datasource import DataSource as DBDataSourceModel # Alias to avoid naming conflict with schema
+from app.models.sync import SyncType # Added for SyncType enum
 from app.utils.sqlserver_utils import test_sqlserver_connection
+from app.tasks.sync_tasks import run_sync_for_datasource_task # Import Celery task
 # from app.core.auth import get_current_active_user # Placeholder for future authentication
 # from app.models.user import User # For current_user type hint
 
@@ -86,3 +88,21 @@ def test_datasource_connection_endpoint(datasource_test_details: DataSourceCreat
     if not test_sqlserver_connection(ds_details=datasource_test_details, password_override=datasource_test_details.db_password):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Connection test failed.")
     return {"message": "Connection test successful"}
+
+
+@router.post("/{datasource_id}/sync", status_code=status.HTTP_202_ACCEPTED)
+def trigger_datasource_sync(datasource_id: int, db: Session = Depends(get_db)):
+    # Optional: Add current_user dependency for authorization if needed
+    # current_user: User = Depends(get_current_active_user)
+
+    # Verify datasource exists
+    db_datasource = crud_datasource.get_datasource(db=db, datasource_id=datasource_id)
+    if db_datasource is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Data source not found")
+
+    # Dispatch the Celery task
+    # .delay() is a shortcut for .apply_async()
+    task = run_sync_for_datasource_task.delay(datasource_id=datasource_id, sync_type_value=SyncType.MANUAL.value)
+
+    # Return the task ID so the client can (optionally) monitor its status
+    return {"message": "Data synchronization task accepted.", "task_id": task.id}
