@@ -1,0 +1,1 @@
+from .parquet_utils import write_data_to_parquet

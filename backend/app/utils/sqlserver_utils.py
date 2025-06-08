@@ -86,3 +86,57 @@ def get_sqlserver_metadata(ds_details: DataSourceBase, password_override: Option
         print(f"Unexpected error (fetching {object_type}): {e}")
         raise # Re-raise
     return results
+
+def fetch_all_data_from_table(
+    ds_details: DataSourceBase,
+    password_override: str,
+    schema_name: str,
+    table_name: str
+) -> List[Dict[str, Any]]:
+
+    details_with_pw = _get_details_with_password(ds_details, password_override)
+    conn_str = build_connection_string(details_with_pw)
+
+    rows_data: List[Dict[str, Any]] = []
+
+    # Basic sanitization/validation for schema and table names
+    # Ensure schema_name defaults to 'dbo' if not provided or empty, which is a common default.
+    effective_schema_name = schema_name if schema_name else 'dbo'
+
+    # Validate characters to prevent SQL injection through object names.
+    # Allowing underscores as they are common in names.
+    if not table_name.replace('_','').isalnum() or not effective_schema_name.replace('_','').isalnum():
+        raise ValueError("Table and schema names must consist of alphanumeric characters and underscores only.")
+
+    # Use pyodbc parameters for table and schema names if possible, though direct f-string formatting for
+    # FROM clause is common. Here, we are embedding them, guarded by the validation above.
+    sql_query = f"SELECT * FROM [{effective_schema_name}].[{table_name}]"
+
+    try:
+        with pyodbc.connect(conn_str, timeout=10) as conn: # Connection timeout
+            with conn.cursor() as cursor:
+                # It's generally safer to set a query timeout if the DB operation might hang
+                # cursor.settimeout(30) # Example: 30 seconds query timeout - specific to some drivers/dbapis
+                # pyodbc cursor itself doesn't have a settimeout. Timeout is on connect() or connection.timeout
+                conn.timeout = 30 # Set execution timeout on the connection for operations
+
+                cursor.execute(sql_query)
+                columns = [column[0] for column in cursor.description]
+
+                if not columns: # No columns found, likely table is empty or doesn't exist as expected
+                    return []
+
+                for row in cursor.fetchall():
+                    rows_data.append(dict(zip(columns, row)))
+    except pyodbc.Error as ex:
+        # More detailed error logging
+        sqlstate = ex.args[0] if ex.args and len(ex.args) > 0 else "Unknown"
+        error_message = str(ex)
+        print(f"SQL Server Error extracting data from {effective_schema_name}.{table_name}. SQLSTATE: {sqlstate}. Message: {error_message}")
+        # Depending on policy, you might want to raise a custom, more generic error
+        # or re-raise the original pyodbc.Error. For now, re-raising.
+        raise
+    except Exception as e:
+        print(f"Unexpected error extracting data from {effective_schema_name}.{table_name}: {e}")
+        raise # Re-raise unexpected errors
+    return rows_data

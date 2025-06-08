@@ -6,3 +6,8 @@ from .metadata import (
     MetadataSyncRequest, MetadataSyncResult,
     TableActivationRequest, TablePreviewResponse # Added for Epic 4
 )
+from .sync import (
+    SyncJobCreate, SyncJobResponse,
+    SyncJobTableDetailCreate, SyncJobTableDetailResponse,
+    TriggerSyncRequest
+)
