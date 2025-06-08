@@ -1,0 +1,21 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# SQLite database
+*.db
+*.db-journal* # Handles journal files for SQLite
+
+# IDE / Editor specific (if not already present)
+.vscode/
+.idea/
+*.swp
+*.swo
+__pycache__/
+*.py[cod]
+*$py.class
